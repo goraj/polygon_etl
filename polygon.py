@@ -34,6 +34,8 @@ class PolygonConfig:
     API_TOKEN = os.getenv("POLYGON_API_TOKEN")
     BASE_URL_V3 = "https://api.polygon.io/v3"
 
+    CONCURRENT_CONNECTIONS = 250
+
     TICKER_LIMIT = 1_000
     TRADE_LIMIT = 50_000
     QUOTE_LIMIT = 50_000
@@ -310,12 +312,14 @@ async def run_task(
                 logger.info(
                     f"Starting job: {symbol = } {date = } {job_date = } {job_type = }"
                 )
-                await fn(connection=connection, session=session, symbol=symbol, date=date)
+                await fn(
+                    connection=connection, session=session, symbol=symbol, date=date
+                )
             except (
                 Exception
-                #aiohttp.ClientError,
-                #asyncpg.InternalClientError,
-                #asyncpg.PostgresError,
+                # aiohttp.ClientError,
+                # asyncpg.InternalClientError,
+                # asyncpg.PostgresError,
             ) as e:
                 logger.error(f"Error job failed: {symbol = } {date = } {e}.")
                 await set_job_status(
@@ -360,9 +364,13 @@ async def etl():
     end_dt = datetime.datetime.strptime(end_dt, "%Y-%m-%d").date()
 
     async with asyncpg.create_pool(
-        database="postgres", user="postgres", password="password"
+        database="postgres",
+        user="postgres",
+        password="password",
+        min_size=10,
+        max_size=PolygonConfig.CONCURRENT_CONNECTIONS,
     ) as pool:
-        connector = aiohttp.TCPConnector(limit=250)
+        connector = aiohttp.TCPConnector(limit=PolygonConfig.CONCURRENT_CONNECTIONS)
         timeout = aiohttp.ClientTimeout(total=600)
         async with aiohttp.ClientSession(
             request_class=KeepAliveClientRequest,
@@ -379,7 +387,7 @@ async def etl():
                 raise_for_status=False,
                 retry_options=retry_options,
             )
-            semaphore = asyncio.BoundedSemaphore(250)
+            semaphore = asyncio.BoundedSemaphore(PolygonConfig.CONCURRENT_CONNECTIONS)
             tasks = []
             while dt.date() <= end_dt:
                 for job_types in [JobType.QUOTES, JobType.TRADES]:
