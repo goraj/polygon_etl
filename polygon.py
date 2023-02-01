@@ -34,7 +34,7 @@ class PolygonConfig:
     API_TOKEN = os.getenv("POLYGON_API_TOKEN")
     BASE_URL_V3 = "https://api.polygon.io/v3"
 
-    CONCURRENT_CONNECTIONS = 250
+    CONCURRENT_CONNECTIONS = 100
 
     TICKER_LIMIT = 1_000
     TRADE_LIMIT = 50_000
@@ -356,6 +356,9 @@ class KeepAliveClientRequest(aiohttp.client_reqrep.ClientRequest):
 
         return await super().send(conn)
 
+async def clean_up_unfinished_tasks(connection: asyncpg.connection):
+    """Checks if job isn't already running or has been completed."""
+    return await connection.execute("""DELETE FROM jobs WHERE status='RUNNING'""")
 
 async def etl():
     symbol = "QQQ"
@@ -387,6 +390,9 @@ async def etl():
                 raise_for_status=False,
                 retry_options=retry_options,
             )
+            async with pool.acquire() as connection:
+                await clean_up_unfinished_tasks(connection)
+
             semaphore = asyncio.BoundedSemaphore(PolygonConfig.CONCURRENT_CONNECTIONS)
             tasks = []
             while dt.date() <= end_dt:
